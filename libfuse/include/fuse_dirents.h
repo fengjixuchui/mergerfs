@@ -22,10 +22,11 @@
 extern "C" {
 #endif
 
+#include "kvec.h"
 #include "fuse_dirent.h"
 #include "fuse_direntplus.h"
 #include "fuse_entry.h"
-#include "linux_dirent64.h"
+#include "linux_dirent.h"
 
 #include <dirent.h>
 #include <stdint.h>
@@ -48,6 +49,7 @@ struct fuse_dirents_s
   char                *buf;
   uint64_t             buf_len;
   uint64_t             data_len;
+  kvec_t(uint32_t)     offs;
   fuse_dirents_type_t  type;
 };
 
@@ -63,14 +65,14 @@ int  fuse_dirents_add_plus(fuse_dirents_t      *d,
                            const uint64_t       namelen,
                            const fuse_entry_t  *entry,
                            const struct stat   *st);
-int  fuse_dirents_add_linux(fuse_dirents_t              *d,
-                            const struct linux_dirent64 *de,
-                            const uint64_t               namelen);
-int  fuse_dirents_add_linux_plus(fuse_dirents_t              *d,
-                                 const struct linux_dirent64 *de,
-                                 const uint64_t               namelen,
-                                 const fuse_entry_t          *entry,
-                                 const struct stat           *st);
+int  fuse_dirents_add_linux(fuse_dirents_t            *d,
+                            const struct linux_dirent *de,
+                            const uint64_t             namelen);
+int  fuse_dirents_add_linux_plus(fuse_dirents_t            *d,
+                                 const struct linux_dirent *de,
+                                 const uint64_t             namelen,
+                                 const fuse_entry_t        *entry,
+                                 const struct stat         *st);
 
 void *fuse_dirents_find(fuse_dirents_t *d,
                         const uint64_t  ino);

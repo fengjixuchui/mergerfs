@@ -1,6 +1,6 @@
 % mergerfs(1) mergerfs user manual
 % Antonio SJ Musumeci <trapexit@spawn.link>
-% 2020-05-25
+% 2020-07-14
 
 # NAME
 
@@ -92,10 +92,13 @@ See the mergerfs [wiki for real world deployments](https://github.com/trapexit/m
 
 ### mount options
 
+* **config**: Path to a config file. Same arguments as below in key=val format.
+* **branches**: Colon delimited list of branches.
 * **allow_other**: A libfuse option which allows users besides the one which ran mergerfs to see the filesystem. This is required for most use-cases.
 * **minfreespace=SIZE**: The minimum space value used for creation policies. Understands 'K', 'M', and 'G' to represent kilobyte, megabyte, and gigabyte respectively. (default: 4G)
-* **moveonenospc=BOOL**: When enabled if a **write** fails with **ENOSPC** (no space left on device) or **EDQUOT** (disk quota exceeded) a scan of all drives will be done looking for the drive with the most free space which is at least the size of the file plus the amount which failed to write. An attempt to move the file to that drive will occur (keeping all metadata possible) and if successful the original is unlinked and the write retried. (default: false)
+* **moveonenospc=BOOL|POLICY**: When enabled if a **write** fails with **ENOSPC** (no space left on device) or **EDQUOT** (disk quota exceeded) the policy selected will run to find a new location for the file. An attempt to move the file to that branch will occur (keeping all metadata possible) and if successful the original is unlinked and the write retried. (default: false, true = mfs)
 * **use_ino**: Causes mergerfs to supply file/directory inodes rather than libfuse. While not a default it is recommended it be enabled so that linked files share the same inode value.
+* **inodecalc=passthrough|path-hash|devino-hash|hybrid-hash**: Selects the inode calculation algorithm. (default: hybrid-hash)
 * **dropcacheonclose=BOOL**: When a file is requested to be closed call `posix_fadvise` on it first to instruct the kernel that we no longer need the data and it can drop its cache. Recommended when **cache.files=partial|full|auto-full** to limit double caching. (default: false)
 * **symlinkify=BOOL**: When enabled and a file is not writable and its mtime or ctime is older than **symlinkify_timeout** files will be reported as symlinks to the original files. Please read more below before using. (default: false)
 * **symlinkify_timeout=INT**: Time to wait, in seconds, to activate the **symlinkify** behavior. (default: 3600)
@@ -167,6 +170,37 @@ To have the pool mounted at boot or otherwise accessible from related tools use 
 **NOTE:** the globbing is done at mount or xattr update time (see below). If a new directory is added matching the glob after the fact it will not be automatically included.
 
 **NOTE:** for mounting via **fstab** to work you must have **mount.fuse** installed. For Ubuntu/Debian it is included in the **fuse** package.
+
+
+### inodecalc
+
+Inodes (st_ino) are unique identifiers within a filesystem. Each mounted filesystem has device ID (st_dev) as well and together they can uniquely identify a file on the whole of the system. Entries on the same device with the same inode are in fact references to the same underlying file. It is a many to one relationship between names and an inode. Directories, however, do not have multiple links on most systems due to the complexity they add.
+
+FUSE allows the server (mergerfs) to set inode values but not device IDs. Creating an inode value is somewhat complex in mergerfs' case as files aren't really in its control. If a policy changes what directory or file is to be selected or something changes out of band it becomes unclear what value should be used. Most software does not to care what the values are but those that do often break if a value changes unexpectedly. The tool `find` will abort a directory walk if it sees a directory inode change. NFS will return stale handle errors if the inode changes out of band. File dedup tools will usually leverage device ids and inodes as a shortcut in searching for duplicate files and would resort to full file comparisons should it find different inode values.
+
+mergerfs offers multiple ways to calculate the inode in hopes of covering different usecases.
+
+* passthrough: Passes through the underlying inode value. Mostly intended for testing as using this does not address any of the problems mentioned above and could confuse file deduplication software as inodes from different filesystems can be the same.
+* path-hash: Hashes the relative path of the entry in question. The underlying file's values are completely ignored. This means the inode value will always be the same for that file path. This is useful when using NFS and you make changes out of band such as copy data between branches. This also means that entries that do point to the same file will not be recognizable via inodes. That **does not** mean hard links don't work. They will.
+* devino-hash: Hashes the device id and inode of the underlying entry. This won't prevent issues with NFS should the policy pick a different file or files move out of band but will present the same inode for underlying files that do too.
+* hybrid-hash: Performs `path-hash` on directories and `devino-hash` on other file types. Since directories can't have hard links the static value won't make a difference and the files will get values useful for finding duplicates. Probably the best to use if not using NFS. As such it is the default.
+
+While there is a risk of hash collision in tests of a couple million entries there were zero collisions. Unlike a typical filesystem FUSE filesystems can reuse inodes and not refer to the same entry. The internal identifier used to reference a file in FUSE is different from the inode value presented. The former is the `nodeid` and is actually a tuple of 2 64bit values: `nodeid` and `generation`. This tuple is not client facing. The inode that is presented to the client is passed through the kernel uninterpreted.
+
+From FUSE docs regarding `use_ino`:
+
+```
+Honor the st_ino field in the functions getattr() and
+fill_dir(). This value is used to fill in the st_ino field
+in the stat(2), lstat(2), fstat(2) functions and the d_ino
+field in the readdir(2) function. The filesystem does not
+have to guarantee uniqueness, however some applications
+rely on this value being unique for the whole filesystem.
+Note that this does *not* affect the inode that libfuse
+and the kernel use internally (also called the "nodeid").
+```
+
+In the future the `use_ino` option will probably be removed as this feature should replace the original libfuse inode calculation strategy. Currently you still need to use `use_ino` in order to enable `inodecalc`.
 
 
 ### fuse_msg_size
@@ -402,7 +436,41 @@ make LTO=1            - build with link time optimization
 
 # RUNTIME CONFIG
 
-#### .mergerfs pseudo file ####
+#### ioctl
+
+The original runtime config API was via xattr calls. This however became an issue when needing to disable xattr. While slightly less convenient ioctl does not have the same problems and will be the main API going forward.
+
+The keys are the same as the command line option arguments as well as the config file.
+
+##### requests / commands
+
+All commands take a 4096 byte char buffer.
+
+* read keys: get a nul '\0' delimited list of option keys
+  * _IOWR(0xDF,0,char[4096]) = 0xD000DF00
+  * on success ioctl return value is the total length
+* read value: get an option value
+  * _IOWR(0xDF,1,char[4096]) = 0xD000DF01
+  * the key is passed in via the char buffer as a nul '\0' terminated string
+  * on success ioctl return value is the total length
+* write value: set an option value
+  * _IOW(0xDF,2,char[4096]) = 0x5000DF02
+  * the key and value is passed in via the char buffer as a nul '\0' terminated string in the format of `key=value`
+  * on success ioctl return value is 0
+* file info: get mergerfs metadata info for a file
+  * _IOWR(0xDF,3,char[4096]) = 0xD000DF03
+  * the key is passed in via the char buffer as a nul '\0' terminated string
+  * on success the ioctl return value is the total length
+  * keys:
+    * basepath: the base mount point for the file according to the getattr policy
+    * relpath: the relative path of the file from the mount point
+    * fullpath: the full path of the underlying file according to the getattr policy
+    * allpaths: a NUL '\0' delimited list of full paths to all files found
+
+
+#### .mergerfs pseudo file (deprecated) ####
+
+NOTE: this interface will be removed in mergerfs 3.0
 
 ```
 <mountpoint>/.mergerfs
@@ -773,14 +841,13 @@ Use `cache.files=off` and/or `dropcacheonclose=true`. See the section on page ca
 
 #### NFS clients returning ESTALE / Stale file handle
 
-Be sure to use `noforget` and `use_ino` arguments.
+NFS does not like out of band changes. That is especially true of inode values.
 
+Be sure to use the following options:
 
-#### NFS clients don't work
-
-Some NFS clients appear to fail when a mergerfs mount is exported. Kodi in particular seems to have issues.
-
-Try enabling the `use_ino` option. Some have reported that it fixes the issue.
+* noforget
+* use_ino
+* inodecalc=path-hash
 
 
 #### rtorrent fails with ENODEV (No such device)
@@ -969,7 +1036,7 @@ This catches a lot of new users off guard but changing the default would break t
 
 #### Do hard links work?
 
-Yes. You need to use `use_ino` to support proper reporting of inodes.
+Yes. You need to use `use_ino` to support proper reporting of inodes but they work regardless. See also the option `inodecalc`.
 
 What mergerfs does not do is fake hard links across branches.  Read the section "rename & link" for how it works.
 
@@ -1087,38 +1154,18 @@ Are you using ext4? With reserve for root? mergerfs uses available space for sta
 
 #### Can mergerfs mounts be exported over NFS?
 
-Yes. Due to current usage of libfuse by mergerfs and how NFS interacts with it it is necessary to add `noforget` to mergerfs options to keep from getting "stale file handle" errors.
+Yes, however if you do anything which may changes files out of band (including for example using the `newest` policy) it will result in "stale file handle" errors.
 
-Some clients (Kodi) have issues in which the contents of the NFS mount will not be presented but users have found that enabling the `use_ino` option often fixes that problem.
+Be sure to use the following options:
+
+* noforget
+* use_ino
+* inodecalc=path-hash
 
 
 #### Can mergerfs mounts be exported over Samba / SMB?
 
 Yes. While some users have reported problems it appears to always be related to how Samba is setup in relation to permissions.
-
-
-#### How are inodes calculated?
-
-https://github.com/trapexit/mergerfs/blob/master/src/fs_inode.hpp
-
-Originally tried to simply OR st_ino and (st_dev << 32) for 64bit systems. After a number of years someone finally ran into a collision that lead to some problems. Traditionally `dev_t` was 16bit and `ino_t` was 32bit so merging into one 64bit value worked but with both types being able to be up to 64bit that is no longer as simple. A proper hash seems like the best compromise. While totally unique inodes are preferred the overhead which would be needed does not seem to be outweighed by the benefits.
-
-While atypical, yes, inodes can be reused and not refer to the same file. The internal id used to reference a file in FUSE is different from the inode value presented. The former is the `nodeid` and is actually a tuple of (nodeid,generation). That tuple is not user facing. The inode is merely metadata passed through the kernel and found using the `stat` family of calls or `readdir`.
-
-From FUSE docs regarding `use_ino`:
-
-```
-Honor the st_ino field in the functions getattr() and
-fill_dir(). This value is used to fill in the st_ino field
-in the stat(2), lstat(2), fstat(2) functions and the d_ino
-field in the readdir(2) function. The filesystem does not
-have to guarantee uniqueness, however some applications
-rely on this value being unique for the whole filesystem.
-Note that this does *not* affect the inode that libfuse
-and the kernel use internally (also called the "nodeid").
-```
-
-Generally collision, if it occurs, shouldn't be a problem. You can turn off the calculation by not using `use_ino`. In the future it might be worth creating different strategies for users to select from.
 
 
 #### I notice massive slowdowns of writes when enabling cache.files.

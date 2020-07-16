@@ -14,6 +14,7 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
+#include "config.hpp"
 #include "errno.hpp"
 #include "fileinfo.hpp"
 #include "fs_base_stat.hpp"
@@ -25,8 +26,9 @@ namespace l
 {
   static
   int
-  fgetattr(const int    fd_,
-           struct stat *st_)
+  fgetattr(const int          fd_,
+           const std::string &fusepath_,
+           struct stat       *st_)
   {
     int rv;
 
@@ -34,7 +36,7 @@ namespace l
     if(rv == -1)
       return -errno;
 
-    fs::inode::recompute(st_);
+    fs::inode::calc(fusepath_,st_);
 
     return 0;
   }
@@ -43,13 +45,21 @@ namespace l
 namespace FUSE
 {
   int
-  fgetattr(const char     *fusepath_,
-           struct stat    *st_,
-           fuse_file_info *ffi_)
+  fgetattr(struct stat     *st_,
+           fuse_file_info  *ffi_,
+           fuse_timeouts_t *timeout_)
   {
+    int rv;
+    const Config &config = Config::ro();
     FileInfo *fi = reinterpret_cast<FileInfo*>(ffi_->fh);
 
-    return l::fgetattr(fi->fd,st_);
+    rv = l::fgetattr(fi->fd,fi->fusepath,st_);
+
+    timeout_->entry = ((rv >= 0) ?
+                       config.cache_entry :
+                       config.cache_negative_entry);
+    timeout_->attr  = config.cache_attr;
+
+    return rv;
   }
 }
-

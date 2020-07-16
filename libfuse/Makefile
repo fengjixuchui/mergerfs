@@ -1,9 +1,9 @@
 VERSION = 2.9.7-mergerfs_2.29.0
 
 ifeq ($(DEBUG),1)
-DEBUG_FLAGS := -O0 -g
+OPT_FLAGS := -O0 -g
 else
-DEBUG_FLAGS :=
+OPT_FLAGS := -O2
 endif
 
 DESTDIR       =
@@ -12,7 +12,7 @@ EXEC_PREFIX   = $(PREFIX)
 DATAROOTDIR   = $(PREFIX)/share
 DATADIR       = $(DATAROOTDIR)
 BINDIR        = $(EXEC_PREFIX)/bin
-SBINDIR       = $(EXEC_PREFIX)/sbin
+SBINDIR       = /sbin
 MANDIR        = $(DATAROOTDIR)/man
 MAN1DIR       = $(MANDIR)/man1
 
@@ -39,8 +39,7 @@ OBJS = $(SRC:lib/%.c=build/%.o)
 DEPS = $(SRC:lib/%.c=build/%.d)
 
 CFLAGS = \
-	-O2 \
-	$(DEBUG_FLAGS) \
+	$(OPT_FLAGS) \
 	-Wall \
 	-pipe \
 	-MMD

@@ -1,7 +1,7 @@
 /*
   ISC License
 
-  Copyright (c) 2016, Antonio SJ Musumeci <trapexit@spawn.link>
+  Copyright (c) 2020, Antonio SJ Musumeci <trapexit@spawn.link>
 
   Permission to use, copy, modify, and/or distribute this software for any
   purpose with or without fee is hereby granted, provided that the above
@@ -18,30 +18,16 @@
 
 #pragma once
 
-#include <string>
+#include "branch.hpp"
 
-#include <stdlib.h>
-#include <string.h>
+#include <fuse.h>
 
-namespace fs
+#include <stdint.h>
+
+namespace FUSE
 {
-  static
-  inline
   int
-  mkstemp(std::string &filepath_)
-  {
-    int fd;
-    char buf[filepath_.size()+8];
-
-    strcpy(buf,filepath_.c_str());
-    strcpy(buf+filepath_.size(),".XXXXXX");
-
-    fd = ::mkstemp(buf);
-    if(fd == -1)
-      return -1;
-
-    filepath_ = buf;
-
-    return fd;
-  }
+  readdir_posix(const Branches &branches,
+                const char     *dirname,
+                fuse_dirents_t *buf);
 }

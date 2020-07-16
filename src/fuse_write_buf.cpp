@@ -19,11 +19,8 @@
 #include "fileinfo.hpp"
 #include "fs_movefile.hpp"
 #include "fuse_write.hpp"
-#include "policy.hpp"
-#include "rwlock.hpp"
-#include "ugid.hpp"
 
-#include <fuse.h>
+#include "fuse.h"
 
 #include <string>
 #include <vector>
@@ -61,13 +58,36 @@ namespace l
 
     return fuse_buf_copy(&dst,src_,cpflags);
   }
+
+  static
+  int
+  move_and_write_buf(FileInfo    *fi_,
+                     fuse_bufvec *src_,
+                     off_t        offset_,
+                     int          err_)
+  {
+    int rv;
+    const Config &config = Config::ro();
+
+    if(config.moveonenospc.enabled == false)
+      return err_;
+
+    rv = fs::movefile_as_root(config.moveonenospc.policy,
+                              config.branches,
+                              config.minfreespace,
+                              fi_->fusepath,
+                              &fi_->fd);
+    if(rv == -1)
+      return err_;
+
+    return l::write_buf(fi_->fd,src_,offset_);
+  }
 }
 
 namespace FUSE
 {
   int
-  write_buf(const char     *fusepath_,
-            fuse_bufvec    *src_,
+  write_buf(fuse_bufvec    *src_,
             off_t           offset_,
             fuse_file_info *ffi_)
   {
@@ -76,34 +96,13 @@ namespace FUSE
 
     rv = l::write_buf(fi->fd,src_,offset_);
     if(l::out_of_space(-rv))
-      {
-        const fuse_context *fc     = fuse_get_context();
-        const Config       &config = Config::get(fc);
-
-        if(config.moveonenospc)
-          {
-            size_t extra;
-            vector<string> paths;
-            const ugid::Set ugid(0,0);
-            const rwlock::ReadGuard readlock(&config.branches_lock);
-
-            config.branches.to_paths(paths);
-
-            extra = fuse_buf_size(src_);
-            rv = fs::movefile(paths,fi->fusepath,extra,fi->fd);
-            if(rv == -1)
-              return -ENOSPC;
-
-            rv = l::write_buf(fi->fd,src_,offset_);
-          }
-      }
+      rv = l::move_and_write_buf(fi,src_,offset_,rv);
 
     return rv;
   }
 
   int
-  write_buf_null(const char     *fusepath_,
-                 fuse_bufvec    *src_,
+  write_buf_null(fuse_bufvec    *src_,
                  off_t           offset_,
                  fuse_file_info *ffi_)
   {

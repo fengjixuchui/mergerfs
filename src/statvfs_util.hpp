@@ -33,7 +33,7 @@ namespace StatVFS
 
   static
   inline
-  uint64_t
+  int64_t
   spaceavail(const struct statvfs &st)
   {
     return (st.f_frsize * st.f_bavail);
@@ -41,7 +41,7 @@ namespace StatVFS
 
   static
   inline
-  uint64_t
+  int64_t
   spaceused(const struct statvfs &st)
   {
     return (st.f_frsize * (st.f_blocks - st.f_bavail));

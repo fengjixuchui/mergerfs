@@ -19,7 +19,6 @@
 #include "fileinfo.hpp"
 #include "fs_base_write.hpp"
 #include "fs_movefile.hpp"
-#include "rwlock.hpp"
 #include "ugid.hpp"
 
 #include <string>
@@ -78,6 +77,32 @@ namespace l
 
   static
   int
+  move_and_write(WriteFunc     func_,
+                 const char   *buf_,
+                 const size_t  count_,
+                 const off_t   offset_,
+                 FileInfo     *fi_,
+                 int           err_)
+  {
+    int rv;
+    const Config &config = Config::ro();
+
+    if(config.moveonenospc.enabled == false)
+      return err_;
+
+    rv = fs::movefile_as_root(config.moveonenospc.policy,
+                              config.branches,
+                              config.minfreespace,
+                              fi_->fusepath,
+                              &fi_->fd);
+    if(rv == -1)
+      return err_;
+
+    return func_(fi_->fd,buf_,count_,offset_);
+  }
+
+  static
+  int
   write(WriteFunc       func_,
         const char     *buf_,
         const size_t    count_,
@@ -91,25 +116,7 @@ namespace l
 
     rv = func_(fi->fd,buf_,count_,offset_);
     if(l::out_of_space(-rv))
-      {
-        const fuse_context *fc     = fuse_get_context();
-        const Config       &config = Config::get(fc);
-
-        if(config.moveonenospc)
-          {
-            vector<string> paths;
-            const ugid::Set ugid(0,0);
-            const rwlock::ReadGuard readlock(&config.branches_lock);
-
-            config.branches.to_paths(paths);
-
-            rv = fs::movefile(paths,fi->fusepath,count_,fi->fd);
-            if(rv == -1)
-              return -ENOSPC;
-
-            rv = func_(fi->fd,buf_,count_,offset_);
-          }
-      }
+      rv = l::move_and_write(func_,buf_,count_,offset_,fi,rv);
 
     return rv;
   }
@@ -118,8 +125,7 @@ namespace l
 namespace FUSE
 {
   int
-  write(const char     *fusepath_,
-        const char     *buf_,
+  write(const char     *buf_,
         size_t          count_,
         off_t           offset_,
         fuse_file_info *ffi_)
@@ -134,8 +140,7 @@ namespace FUSE
   }
 
   int
-  write_null(const char     *fusepath_,
-             const char     *buf_,
+  write_null(const char     *buf_,
              size_t          count_,
              off_t           offset_,
              fuse_file_info *ffi_)
