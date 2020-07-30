@@ -16,24 +16,14 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
-#include "errno.hpp"
+#pragma once
 
-#if defined __linux__
-#include <unistd.h>
-#include <sys/syscall.h>
-#endif
+#include "enum.hpp"
 
-namespace fs
-{
-  int
-  getdents(unsigned int  fd_,
-           void         *dirp_,
-           unsigned int  count_)
+enum class StatFSEnum
   {
-#if defined SYS_getdents64
-    return ::syscall(SYS_getdents,fd_,dirp_,count_);
-#else
-    return (errno=ENOTSUP,-1);
-#endif
-  }
-}
+    BASE,
+    FULL
+  };
+
+typedef Enum<StatFSEnum> StatFS;

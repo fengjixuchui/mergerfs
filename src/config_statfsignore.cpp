@@ -16,24 +16,39 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
+#include "config_statfsignore.hpp"
+#include "ef.hpp"
 #include "errno.hpp"
 
-#if defined __linux__
-#include <unistd.h>
-#include <sys/syscall.h>
-#endif
-
-namespace fs
+template<>
+std::string
+StatFSIgnore::to_string() const
 {
-  int
-  getdents(unsigned int  fd_,
-           void         *dirp_,
-           unsigned int  count_)
-  {
-#if defined SYS_getdents64
-    return ::syscall(SYS_getdents,fd_,dirp_,count_);
-#else
-    return (errno=ENOTSUP,-1);
-#endif
-  }
+  switch(_data)
+    {
+    case StatFSIgnore::ENUM::NONE:
+      return "none";
+    case StatFSIgnore::ENUM::RO:
+      return "ro";
+    case StatFSIgnore::ENUM::NC:
+      return "nc";
+    }
+
+  return "invalid";
+}
+
+template<>
+int
+StatFSIgnore::from_string(const std::string &s_)
+{
+  if(s_ == "none")
+    _data = StatFSIgnore::ENUM::NONE;
+  ef(s_ == "ro")
+    _data = StatFSIgnore::ENUM::RO;
+  ef(s_ == "nc")
+    _data = StatFSIgnore::ENUM::NC;
+  else
+    return -EINVAL;
+
+  return 0;
 }

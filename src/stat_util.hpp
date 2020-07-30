@@ -16,24 +16,33 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
-#include "errno.hpp"
+#pragma once
 
-#if defined __linux__
-#include <unistd.h>
-#include <sys/syscall.h>
-#endif
+#include <sys/stat.h>
 
-namespace fs
+namespace StatUtil
 {
-  int
-  getdents(unsigned int  fd_,
-           void         *dirp_,
-           unsigned int  count_)
+  static
+  inline
+  bool
+  empty(const struct stat &st_)
   {
-#if defined SYS_getdents64
-    return ::syscall(SYS_getdents,fd_,dirp_,count_);
-#else
-    return (errno=ENOTSUP,-1);
-#endif
+    return (st_.st_size == 0);
+  }
+
+  static
+  inline
+  bool
+  writable(const struct stat &st_)
+  {
+    return (st_.st_mode & (S_IWUSR|S_IWGRP|S_IWOTH));
+  }
+
+  static
+  inline
+  bool
+  writable_or_not_empty(const struct stat &st_)
+  {
+    return (StatUtil::writable(st_) || !StatUtil::empty(st_));
   }
 }

@@ -20,8 +20,6 @@
 
 #include <fuse.h>
 
-#include <sys/stat.h>
-
 namespace l
 {
   static

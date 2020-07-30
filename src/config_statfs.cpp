@@ -16,24 +16,35 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
+#include "config_statfs.hpp"
+#include "ef.hpp"
 #include "errno.hpp"
 
-#if defined __linux__
-#include <unistd.h>
-#include <sys/syscall.h>
-#endif
-
-namespace fs
+template<>
+std::string
+StatFS::to_string() const
 {
-  int
-  getdents(unsigned int  fd_,
-           void         *dirp_,
-           unsigned int  count_)
-  {
-#if defined SYS_getdents64
-    return ::syscall(SYS_getdents,fd_,dirp_,count_);
-#else
-    return (errno=ENOTSUP,-1);
-#endif
-  }
+  switch(_data)
+    {
+    case StatFS::ENUM::BASE:
+      return "base";
+    case StatFS::ENUM::FULL:
+      return "full";
+    }
+
+  return "invalid";
+}
+
+template<>
+int
+StatFS::from_string(const std::string &s_)
+{
+  if(s_ == "base")
+    _data = StatFS::ENUM::BASE;
+  ef(s_ == "full")
+    _data = StatFS::ENUM::FULL;
+  else
+    return -EINVAL;
+
+  return 0;
 }

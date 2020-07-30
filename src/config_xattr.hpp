@@ -16,24 +16,16 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
+#pragma once
+
+#include "enum.hpp"
 #include "errno.hpp"
 
-#if defined __linux__
-#include <unistd.h>
-#include <sys/syscall.h>
-#endif
-
-namespace fs
-{
-  int
-  getdents(unsigned int  fd_,
-           void         *dirp_,
-           unsigned int  count_)
+enum class XAttrEnum
   {
-#if defined SYS_getdents64
-    return ::syscall(SYS_getdents,fd_,dirp_,count_);
-#else
-    return (errno=ENOTSUP,-1);
-#endif
-  }
-}
+    PASSTHROUGH = 0,
+    NOSYS       = ENOSYS,
+    NOATTR      = ENOATTR
+  };
+
+typedef Enum<XAttrEnum> XAttr;

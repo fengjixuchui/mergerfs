@@ -17,9 +17,14 @@
 #pragma once
 
 #include "branch.hpp"
+#include "config_cachefiles.hpp"
 #include "config_inodecalc.hpp"
-#include "config_readdir.hpp"
 #include "config_moveonenospc.hpp"
+#include "config_nfsopenhack.hpp"
+#include "config_readdir.hpp"
+#include "config_statfs.hpp"
+#include "config_statfsignore.hpp"
+#include "config_xattr.hpp"
 #include "enum.hpp"
 #include "errno.hpp"
 #include "func_category.hpp"
@@ -44,40 +49,6 @@ typedef std::map<std::string,ToFromString*> Str2TFStrMap;
 
 class Config
 {
-public:
-  enum class StatFSEnum
-    {
-      BASE,
-      FULL
-    };
-  typedef Enum<StatFSEnum> StatFS;
-
-  enum class StatFSIgnoreEnum
-    {
-      NONE,
-      RO,
-      NC
-    };
-  typedef Enum<StatFSIgnoreEnum> StatFSIgnore;
-
-  enum class CacheFilesEnum
-    {
-      LIBFUSE,
-      OFF,
-      PARTIAL,
-      FULL,
-      AUTO_FULL
-    };
-  typedef Enum<CacheFilesEnum> CacheFiles;
-
-  enum class XAttrEnum
-    {
-      PASSTHROUGH = 0,
-      NOSYS       = ENOSYS,
-      NOATTR      = ENOATTR
-    };
-  typedef Enum<XAttrEnum> XAttr;
-
 public:
   Config();
 
@@ -111,6 +82,7 @@ public:
   ConfigUINT64   minfreespace;
   ConfigSTR      mount;
   MoveOnENOSPC   moveonenospc;
+  NFSOpenHack    nfsopenhack;
   ConfigBOOL     nullrw;
   ConfigUINT64   pid;
   ConfigBOOL     posix_acl;

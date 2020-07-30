@@ -16,24 +16,39 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
+#include "config_nfsopenhack.hpp"
+#include "ef.hpp"
 #include "errno.hpp"
 
-#if defined __linux__
-#include <unistd.h>
-#include <sys/syscall.h>
-#endif
-
-namespace fs
+template<>
+int
+NFSOpenHack::from_string(const std::string &s_)
 {
-  int
-  getdents(unsigned int  fd_,
-           void         *dirp_,
-           unsigned int  count_)
-  {
-#if defined SYS_getdents64
-    return ::syscall(SYS_getdents,fd_,dirp_,count_);
-#else
-    return (errno=ENOTSUP,-1);
-#endif
-  }
+  if(s_ == "off")
+    _data = NFSOpenHack::ENUM::OFF;
+  ef(s_ == "git")
+    _data = NFSOpenHack::ENUM::GIT;
+  ef(s_ == "all")
+    _data = NFSOpenHack::ENUM::ALL;
+  else
+    return -EINVAL;
+
+  return 0;
+}
+
+template<>
+std::string
+NFSOpenHack::to_string(void) const
+{
+  switch(_data)
+    {
+    case NFSOpenHack::ENUM::OFF:
+      return "off";
+    case NFSOpenHack::ENUM::GIT:
+      return "git";
+    case NFSOpenHack::ENUM::ALL:
+      return "all";
+    }
+
+  return std::string();
 }

@@ -16,40 +16,47 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
-#include "config_moveonenospc.hpp"
+#include "config_cachefiles.hpp"
 #include "ef.hpp"
 #include "errno.hpp"
-#include "from_string.hpp"
 
-int
-MoveOnENOSPC::from_string(const std::string &s_)
+template<>
+std::string
+CacheFiles::to_string() const
 {
-  int rv;
-  std::string s;
-  const Policy *tmp;
+  switch(_data)
+    {
+    case CacheFiles::ENUM::LIBFUSE:
+      return "libfuse";
+    case CacheFiles::ENUM::OFF:
+      return "off";
+    case CacheFiles::ENUM::PARTIAL:
+      return "partial";
+    case CacheFiles::ENUM::FULL:
+      return "full";
+    case CacheFiles::ENUM::AUTO_FULL:
+      return "auto-full";
+    }
 
-  rv = str::from(s_,&enabled);
-  if((rv == 0) && (enabled == true))
-    s = "mfs";
-  ef(rv != 0)
-    s = s_;
-  else
-    return 0;
-
-  tmp = &Policy::find(s);
-  if(tmp == Policy::invalid)
-    return -EINVAL;
-
-  policy  = tmp;
-  enabled = true;
-
-  return 0;
+  return "invalid";
 }
 
-std::string
-MoveOnENOSPC::to_string(void) const
+template<>
+int
+CacheFiles::from_string(const std::string &s_)
 {
-  if(enabled)
-    return policy->to_string();
-  return "false";
+  if(s_ == "libfuse")
+    _data = CacheFiles::ENUM::LIBFUSE;
+  ef(s_ == "off")
+    _data = CacheFiles::ENUM::OFF;
+  ef(s_ == "partial")
+    _data = CacheFiles::ENUM::PARTIAL;
+  ef(s_ == "full")
+    _data = CacheFiles::ENUM::FULL;
+  ef(s_ == "auto-full")
+    _data = CacheFiles::ENUM::AUTO_FULL;
+  else
+    return -EINVAL;
+
+  return 0;
 }

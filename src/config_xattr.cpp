@@ -16,24 +16,39 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
+#include "config_xattr.hpp"
+#include "ef.hpp"
 #include "errno.hpp"
 
-#if defined __linux__
-#include <unistd.h>
-#include <sys/syscall.h>
-#endif
-
-namespace fs
+template<>
+std::string
+XAttr::to_string() const
 {
-  int
-  getdents(unsigned int  fd_,
-           void         *dirp_,
-           unsigned int  count_)
-  {
-#if defined SYS_getdents64
-    return ::syscall(SYS_getdents,fd_,dirp_,count_);
-#else
-    return (errno=ENOTSUP,-1);
-#endif
-  }
+  switch(_data)
+    {
+    case XAttr::ENUM::PASSTHROUGH:
+      return "passthrough";
+    case XAttr::ENUM::NOSYS:
+      return "nosys";
+    case XAttr::ENUM::NOATTR:
+      return "noattr";
+    }
+
+  return "invalid";
+}
+
+template<>
+int
+XAttr::from_string(const std::string &s_)
+{
+  if(s_ == "passthrough")
+    _data = XAttr::ENUM::PASSTHROUGH;
+  ef(s_ == "nosys")
+    _data = XAttr::ENUM::NOSYS;
+  ef(s_ == "noattr")
+    _data = XAttr::ENUM::NOATTR;
+  else
+    return -EINVAL;
+
+  return 0;
 }
