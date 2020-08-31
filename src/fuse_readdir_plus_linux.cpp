@@ -16,16 +16,16 @@
 
 #include "branch.hpp"
 #include "errno.hpp"
-#include "fs_base_close.hpp"
-#include "fs_base_fstatat.hpp"
-#include "fs_base_getdents.hpp"
-#include "fs_base_open.hpp"
-#include "fs_base_stat.hpp"
+#include "fs_close.hpp"
 #include "fs_devid.hpp"
+#include "fs_fstatat.hpp"
+#include "fs_getdents64.hpp"
 #include "fs_inode.hpp"
+#include "fs_open.hpp"
 #include "fs_path.hpp"
+#include "fs_stat.hpp"
 #include "hashset.hpp"
-#include "linux_dirent.h"
+#include "linux_dirent64.h"
 #include "mempools.hpp"
 
 #include <fuse.h>
@@ -41,13 +41,6 @@ using std::vector;
 
 namespace l
 {
-  static
-  char
-  denttype(struct linux_dirent *d_)
-  {
-    return *((char*)d_ + d_->reclen - 1);
-  }
-
   static
   int
   close_free_ret_enomem(int   fd_,
@@ -75,7 +68,7 @@ namespace l
     uint64_t namelen;
     struct stat st;
     fuse_entry_t entry;
-    struct linux_dirent *d;
+    struct linux_dirent64 *d;
 
     buf = (char*)g_DENTS_BUF_POOL.alloc();
 
@@ -90,7 +83,7 @@ namespace l
         int dirfd;
         int64_t nread;
 
-        basepath = fs::path::make(&branches_[i].path,dirname_);
+        basepath = fs::path::make(branches_[i].path,dirname_);
 
         dirfd = fs::open_dir_ro(basepath);
         if(dirfd == -1)
@@ -102,7 +95,7 @@ namespace l
 
         for(;;)
           {
-            nread = fs::getdents(dirfd,buf,g_DENTS_BUF_POOL.size());
+            nread = fs::getdents_64(dirfd,buf,g_DENTS_BUF_POOL.size());
             if(nread == -1)
               break;
             if(nread == 0)
@@ -110,7 +103,7 @@ namespace l
 
             for(int64_t pos = 0; pos < nread; pos += d->reclen)
               {
-                d = (struct linux_dirent*)(buf + pos);
+                d = (struct linux_dirent64*)(buf + pos);
                 namelen = (strlen(d->name) + 1);
 
                 rv = names.put(d->name,namelen);
@@ -123,7 +116,7 @@ namespace l
                     memset(&st,0,sizeof(st));
                     st.st_ino  = d->ino;
                     st.st_dev  = dev;
-                    st.st_mode = DTTOIF(l::denttype(d));
+                    st.st_mode = DTTOIF(d->type);
                   }
 
                 fullpath = fs::path::make(dirname_,d->name);

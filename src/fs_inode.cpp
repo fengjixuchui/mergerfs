@@ -18,8 +18,8 @@
 
 #include "ef.hpp"
 #include "errno.hpp"
-#include "fasthash.h"
 #include "fs_inode.hpp"
+#include "wyhash.h"
 
 #include <string>
 
@@ -33,6 +33,14 @@ typedef uint64_t (*inodefunc_t)(const char*,const uint64_t,const mode_t,const de
 static uint64_t hybrid_hash(const char*,const uint64_t,const mode_t,const dev_t,const ino_t);
 
 static inodefunc_t g_func = hybrid_hash;
+
+
+static
+uint32_t
+h64_to_h32(uint64_t h_)
+{
+  return (h_ - (h_ >> 32));
+}
 
 static
 uint64_t
@@ -53,9 +61,29 @@ path_hash(const char     *fusepath_,
           const dev_t     dev_,
           const ino_t     ino_)
 {
-  return fasthash64(fusepath_,
-                    fusepath_len_,
-                    fs::inode::MAGIC);
+  return wyhash(fusepath_,
+                fusepath_len_,
+                fs::inode::MAGIC,
+                _wyp);
+}
+
+static
+uint64_t
+path_hash32(const char     *fusepath_,
+            const uint64_t  fusepath_len_,
+            const mode_t    mode_,
+            const dev_t     dev_,
+            const ino_t     ino_)
+{
+  uint64_t h;
+
+  h = path_hash(fusepath_,
+                fusepath_len_,
+                mode_,
+                dev_,
+                ino_);
+
+  return h64_to_h32(h);
 }
 
 static
@@ -71,9 +99,29 @@ devino_hash(const char     *fusepath_,
   buf[0] = dev_;
   buf[1] = ino_;
 
-  return fasthash64((void*)&buf[0],
-                    sizeof(buf),
-                    fs::inode::MAGIC);
+  return wyhash((void*)&buf[0],
+                sizeof(buf),
+                fs::inode::MAGIC,
+                _wyp);
+}
+
+static
+uint64_t
+devino_hash32(const char     *fusepath_,
+              const uint64_t  fusepath_len_,
+              const mode_t    mode_,
+              const dev_t     dev_,
+              const ino_t     ino_)
+{
+  uint64_t h;
+
+  h = devino_hash(fusepath_,
+                  fusepath_len_,
+                  mode_,
+                  dev_,
+                  ino_);
+
+  return h64_to_h32(h);
 }
 
 static
@@ -89,6 +137,18 @@ hybrid_hash(const char     *fusepath_,
           devino_hash(fusepath_,fusepath_len_,mode_,dev_,ino_));
 }
 
+static
+uint64_t
+hybrid_hash32(const char     *fusepath_,
+              const uint64_t  fusepath_len_,
+              const mode_t    mode_,
+              const dev_t     dev_,
+              const ino_t     ino_)
+{
+  return (S_ISDIR(mode_) ?
+          path_hash32(fusepath_,fusepath_len_,mode_,dev_,ino_) :
+          devino_hash32(fusepath_,fusepath_len_,mode_,dev_,ino_));
+}
 
 namespace fs
 {
@@ -101,10 +161,16 @@ namespace fs
         g_func = passthrough;
       ef(algo_ == "path-hash")
         g_func = path_hash;
+      ef(algo_ == "path-hash32")
+        g_func = path_hash32;
       ef(algo_ == "devino-hash")
         g_func = devino_hash;
+      ef(algo_ == "devino-hash32")
+        g_func = devino_hash32;
       ef(algo_ == "hybrid-hash")
         g_func = hybrid_hash;
+      ef(algo_ == "hybrid-hash32")
+        g_func = hybrid_hash32;
       else
         return -EINVAL;
 

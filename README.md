@@ -1,6 +1,6 @@
 % mergerfs(1) mergerfs user manual
 % Antonio SJ Musumeci <trapexit@spawn.link>
-% 2020-07-22
+% 2020-08-30
 
 # NAME
 
@@ -183,8 +183,13 @@ mergerfs offers multiple ways to calculate the inode in hopes of covering differ
 
 * passthrough: Passes through the underlying inode value. Mostly intended for testing as using this does not address any of the problems mentioned above and could confuse file deduplication software as inodes from different filesystems can be the same.
 * path-hash: Hashes the relative path of the entry in question. The underlying file's values are completely ignored. This means the inode value will always be the same for that file path. This is useful when using NFS and you make changes out of band such as copy data between branches. This also means that entries that do point to the same file will not be recognizable via inodes. That **does not** mean hard links don't work. They will.
+* path-hash32: 32bit version of path-hash.
 * devino-hash: Hashes the device id and inode of the underlying entry. This won't prevent issues with NFS should the policy pick a different file or files move out of band but will present the same inode for underlying files that do too.
+* devino-hash32: 32bit version of devino-hash.
 * hybrid-hash: Performs `path-hash` on directories and `devino-hash` on other file types. Since directories can't have hard links the static value won't make a difference and the files will get values useful for finding duplicates. Probably the best to use if not using NFS. As such it is the default.
+* hybrid-hash32: 32bit version of hybrid-hash.
+
+32bit versions are provided as there is some software which does not handle 64bit inodes well.
 
 While there is a risk of hash collision in tests of a couple million entries there were zero collisions. Unlike a typical filesystem FUSE filesystems can reuse inodes and not refer to the same entry. The internal identifier used to reference a file in FUSE is different from the inode value presented. The former is the `nodeid` and is actually a tuple of 2 64bit values: `nodeid` and `generation`. This tuple is not client facing. The inode that is presented to the client is passed through the kernel uninterpreted.
 
@@ -246,7 +251,7 @@ NFS is not fully POSIX compliant and historically certain behaviors, such as ope
 
 This hack addresses the issue where the creation of a file with a read-only mode but with a read/write or write only flag. Normally this is perfectly valid but NFS chops the one open call into multiple calls. Exactly how it is translated depends on the configuration and versions of the NFS server and clients but it results in a permission error because a normal user is not allowed to open a read-only file as writable.
 
-Even though it's a more niche stituation this hack breaks normal security and behavior and as such is `off` by default. If set to `git` it will only perform the hack when the path in question includes `/.git/`. `all` will result it it applying anytime a readonly file which is empty is opened for writing.
+Even though it's a more niche situation this hack breaks normal security and behavior and as such is `off` by default. If set to `git` it will only perform the hack when the path in question includes `/.git/`. `all` will result it it applying anytime a readonly file which is empty is opened for writing.
 
 
 # FUNCTIONS / POLICIES / CATEGORIES
@@ -296,27 +301,30 @@ If all branches are filtered an error will be returned. Typically **EROFS** (rea
 
 #### Policy descriptions
 
-Because of the nature of the behavior the policies act diffierently depending on the function it is used with (based on the category).
+Because of the nature of the behavior the policies act differently depending on the function it is used with (based on the category).
 
 
 | Policy           | Description                                                |
 |------------------|------------------------------------------------------------|
-| all | Search: same as **epall**. Action: same as **epall**. Create: for **mkdir**, **mknod**, and **symlink** it will apply to all branches. **create** works like **ff**. |
-| epall (existing path, all) | Search: same as **epff** (but more expensive because it doesn't stop after finding a valid branch). Action: apply to all found. Create: for **mkdir**, **mknod**, and **symlink** it will apply to all found. **create** works like **epff** (but more expensive because it doesn't stop after finding a valid branch). |
+| all | Search: Same as **epall**. Action: Same as **epall**. Create: for **mkdir**, **mknod**, and **symlink** it will apply to all branches. **create** works like **ff**. |
+| epall (existing path, all) | Search: Same as **epff** (but more expensive because it doesn't stop after finding a valid branch). Action: apply to all found. Create: for **mkdir**, **mknod**, and **symlink** it will apply to all found. **create** works like **epff** (but more expensive because it doesn't stop after finding a valid branch). |
 | epff (existing path, first found) | Given the order of the branches, as defined at mount time or configured at runtime, act on the first one found where the relative path exists. |
 | eplfs (existing path, least free space) | Of all the branches on which the relative path exists choose the drive with the least free space. |
 | eplus (existing path, least used space) | Of all the branches on which the relative path exists choose the drive with the least used space. |
 | epmfs (existing path, most free space) | Of all the branches on which the relative path exists choose the drive with the most free space. |
+| eppfrd (existing path, percentage free random distribution) | Like **pfrd** but limited to existing paths.  |
 | eprand (existing path, random) | Calls **epall** and then randomizes. Returns 1. |
 | erofs | Exclusively return **-1** with **errno** set to **EROFS** (read-only filesystem). |
-| ff (first found) | Search: same as **epff**. Action: same as **epff**. Create: Given the order of the drives, as defined at mount time or configured at runtime, act on the first one found. |
-| lfs (least free space) | Search: same as **eplfs**. Action: same as **eplfs**. Create: Pick the drive with the least available free space. |
-| lus (least used space) | Search: same as **eplus**. Action: same as **eplus**. Create: Pick the drive with the least used space. |
-| mfs (most free space) | Search: same as **epmfs**. Action: same as **epmfs**. Create: Pick the drive with the most available free space. |
-| msplfs (most shared path, least free space) | Search: same as **eplfs**. Action: same as **eplfs**. Create: like **eplfs** but walk back the path if it fails to find a branch at that level. |
-| msplus (most shared path, least used space) | Search: same as **eplus**. Action: same as **eplus**. Create: like **eplus** but walk back the path if it fails to find a branch at that level. |
-| mspmfs (most shared path, most free space) | Search: same as **epmfss**. Action: same as **epmfs**. Create: like **eplmfs** but walk back the path if it fails to find a branch at that level. |
+| ff (first found) | Search: Same as **epff**. Action: Same as **epff**. Create: Given the order of the drives, as defined at mount time or configured at runtime, act on the first one found. |
+| lfs (least free space) | Search: Same as **eplfs**. Action: Same as **eplfs**. Create: Pick the drive with the least available free space. |
+| lus (least used space) | Search: Same as **eplus**. Action: Same as **eplus**. Create: Pick the drive with the least used space. |
+| mfs (most free space) | Search: Same as **epmfs**. Action: Same as **epmfs**. Create: Pick the drive with the most available free space. |
+| msplfs (most shared path, least free space) | Search: Same as **eplfs**. Action: Same as **eplfs**. Create: like **eplfs** but walk back the path if it fails to find a branch at that level. |
+| msplus (most shared path, least used space) | Search: Same as **eplus**. Action: Same as **eplus**. Create: like **eplus** but walk back the path if it fails to find a branch at that level. |
+| mspmfs (most shared path, most free space) | Search: Same as **epmfs**. Action: Same as **epmfs**. Create: like **epmfs** but walk back the path if it fails to find a branch at that level. |
+| msppfrd (most shared path, percentage free random distribution) | Search: Same as **eppfrd**. Action: Same as **eppfrd**. Create: Like **eppfrd** but will walk back the path if it fails to find a branch at that level. |
 | newest | Pick the file / directory with the largest mtime. |
+| pfrd (percentage free random distribution) | Search: Same as **eppfrd**. Action: Same as **eppfrd**. Create: Chooses a branch at random with the likelihood of selection based on a branch's available space relative to the total. |
 | rand (random) | Calls **all** and then randomizes. Returns 1. |
 
 **NOTE:** If you are using an underlying filesystem that reserves blocks such as ext2, ext3, or ext4 be aware that mergerfs respects the reservation by using `f_bavail` (number of free blocks for unprivileged users) rather than `f_bfree` (number of free blocks) in policy calculations. **df** does NOT use `f_bavail`, it uses `f_bfree`, so direct comparisons between **df** output and mergerfs' policies is not appropriate.
@@ -404,7 +412,8 @@ The options `statfs` and `statfs_ignore` can be used to modify `statfs` behavior
 
 # BUILD / UPDATE
 
-**NOTE:** Prebuilt packages can be found at: https://github.com/trapexit/mergerfs/releases
+**NOTE:** Prebuilt packages can be found at and recommended for most users: https://github.com/trapexit/mergerfs/releases
+**NOTE:** Only tagged releases are supported. `master` and other branches should be considered works in progress.
 
 First get the code from [github](https://github.com/trapexit/mergerfs).
 
@@ -650,7 +659,7 @@ Given the relatively high cost of FUSE due to the kernel <-> userspace round tri
 
 When `cache.files` is enabled the default is for it to perform writethrough caching. This behavior won't help improve performance as each write still goes one for one through the filesystem. By enabling the FUSE writeback cache small writes may be aggregated by the kernel and then sent to mergerfs as one larger request. This can greatly improve the throughput for apps which write to files inefficiently. The amount the kernel can aggregate is limited by the size of a FUSE message. Read the `fuse_msg_size` section for more details.
 
-There is a small side effect as a result of enabling wrtieback caching. Underlying files won't ever be opened with O_APPEND or O_WRONLY. The former because the kernel then manages append mode and the latter because the kernel may request file data from mergerfs to populate the write cache. The O_APPEND change means that if a file is changed outside of mergerfs it could lead to corruption as the kernel won't know the end of the file has changed. That said any time you use caching you should keep from using the same file outside of mergerfs at the same time.
+There is a small side effect as a result of enabling writeback caching. Underlying files won't ever be opened with O_APPEND or O_WRONLY. The former because the kernel then manages append mode and the latter because the kernel may request file data from mergerfs to populate the write cache. The O_APPEND change means that if a file is changed outside of mergerfs it could lead to corruption as the kernel won't know the end of the file has changed. That said any time you use caching you should keep from using the same file outside of mergerfs at the same time.
 
 Note that if an application is properly sizing writes then writeback caching will have little or no effect. It will only help with writes of sizes below the FUSE message size (128K on older kernels, 1M on newer).
 
@@ -816,7 +825,7 @@ $ dd if=/mnt/mergerfs/1GB.file of=/dev/null bs=1M count=1024 iflag=nocache conv=
 * Run mergerfs as `root` (with **allow_other**) unless you're merging paths which are owned by the same user otherwise strange permission issues may arise.
 * https://github.com/trapexit/backup-and-recovery-howtos : A set of guides / howtos on creating a data storage system, backing it up, maintaining it, and recovering from failure.
 * If you don't see some directories and files you expect in a merged point or policies seem to skip drives be sure the user has permission to all the underlying directories. Use `mergerfs.fsck` to audit the drive for out of sync permissions.
-* Do **not** use `cache.files=off` (or `direct_io`) if you expect applications (such as rtorrent) to [mmap](http://linux.die.net/man/2/mmap) files. Shared mmap is not currently supported in FUSE w/ `direct_io` enabled. Enabling `dropcacheonclose` is recommended when `cache.files=partial|full|auto-full` or `direct_io=false`.
+* Do **not** use `cache.files=off` if you expect applications (such as rtorrent) to use [mmap](http://linux.die.net/man/2/mmap) files. Shared mmap is not currently supported in FUSE w/ page caching disabled. Enabling `dropcacheonclose` is recommended when `cache.files=partial|full|auto-full`.
 * Since POSIX functions give only a singular error or success its difficult to determine the proper behavior when applying the function to multiple targets. **mergerfs** will return an error only if all attempts of an action fail. Any success will lead to a success returned. This means however that some odd situations may arise.
 * [Kodi](http://kodi.tv), [Plex](http://plex.tv), [Subsonic](http://subsonic.org), etc. can use directory [mtime](http://linux.die.net/man/2/stat) to more efficiently determine whether to scan for new content rather than simply performing a full scan. If using the default **getattr** policy of **ff** it's possible those programs will miss an update on account of it returning the first directory found's **stat** info and its a later directory on another mount which had the **mtime** recently updated. To fix this you will want to set **func.getattr=newest**. Remember though that this is just **stat**. If the file is later **open**'ed or **unlink**'ed and the policy is different for those then a completely different file or directory could be acted on.
 * Some policies mixed with some functions may result in strange behaviors. Not that some of these behaviors and race conditions couldn't happen outside **mergerfs** but that they are far more likely to occur on account of the attempt to merge together multiple sources of data which could be out of sync due to the different policies.
@@ -824,6 +833,10 @@ $ dd if=/mnt/mergerfs/1GB.file of=/dev/null bs=1M count=1024 iflag=nocache conv=
 
 
 # KNOWN ISSUES / BUGS
+
+#### kernel issues & bugs
+
+[https://github.com/trapexit/mergerfs/wiki/Kernel-Issues-&-Bugs](https://github.com/trapexit/mergerfs/wiki/Kernel-Issues-&-Bugs)
 
 #### directory mtime is not being updated
 
@@ -874,28 +887,11 @@ Be sure to use the following options:
 Be sure to set `cache.files=partial|full|auto-full` or turn off `direct_io`. rtorrent and some other applications use [mmap](http://linux.die.net/man/2/mmap) to read and write to files and offer no fallback to traditional methods. FUSE does not currently support mmap while using `direct_io`. There may be a performance penalty on writes with `direct_io` off as well as the problem of double caching but it's the only way to get such applications to work. If the performance loss is too high for other apps you can mount mergerfs twice. Once with `direct_io` enabled and one without it. Be sure to set `dropcacheonclose=true` if not using `direct_io`.
 
 
-#### rtorrent fails with files >= 4GiB
-
-This is a kernel bug with mmap and FUSE on 32bit platforms. A fix should become available for all LTS releases.
-
-https://marc.info/?l=linux-fsdevel&m=155550785230874&w=2
-
-
-#### Crashing on OpenVZ
-
-There appears to be a bug in the OpenVZ kernel with regard to how it handles ioctl calls. It is making invalid requests which leads to a crash. As of 2019-12-10 there is a bug report filed with OpenVZ but it is not yet fixed.
-
-
 #### Plex doesn't work with mergerfs
 
-It does. If you're trying to put Plex's config / metadata on mergerfs you have to leave `direct_io` off because Plex is using sqlite3 which apparently needs mmap. mmap doesn't work with `direct_io`. To fix this place the data elsewhere or disable `direct_io` (with `dropcacheonclose=true`). Sqlite3 does not need mmap but the developer needs to fall back to standard IO if mmap fails.
+It does. If you're trying to put Plex's config / metadata / database on mergerfs you can't set `cache.files=off` because Plex is using sqlite3 with mmap enabled. Shared mmap is not supported by Linux's FUSE implementation when page caching is disabled. To fix this place the data elsewhere (preferable) or enable `cache.files` (with `dropcacheonclose=true`). Sqlite3 does not need mmap but the developer needs to fall back to standard IO if mmap fails.
 
-If the issue is that scanning doesn't seem to pick up media then be sure to set `func.getattr=newest` as mentioned above.
-
-
-#### mmap performance is really bad
-
-There [is/was a bug](https://lkml.org/lkml/2016/3/16/260) in caching which affects overall performance of mmap through FUSE in Linux 4.x kernels. It is fixed in [4.4.10 and 4.5.4](https://lkml.org/lkml/2016/5/11/59).
+If the issue is that scanning doesn't seem to pick up media then be sure to set `func.getattr=newest` though generally a full scan will pick up all media anyway.
 
 
 #### When a program tries to move or rename a file it fails
@@ -905,6 +901,11 @@ Please read the section above regarding [rename & link](#rename--link).
 The problem is that many applications do not properly handle `EXDEV` errors which `rename` and `link` may return even though they are perfectly valid situations which do not indicate actual drive or OS errors. The error will only be returned by mergerfs if using a path preserving policy as described in the policy section above. If you do not care about path preservation simply change the mergerfs policy to the non-path preserving version. For example: `-o category.create=mfs`
 
 Ideally the offending software would be fixed and it is recommended that if you run into this problem you contact the software's author and request proper handling of `EXDEV` errors.
+
+
+#### my 32bit software has problems
+
+Some software have problems with 64bit inode values. The symptoms can include EOVERFLOW errors when trying to list files. You can address this by setting `inodecalc` to one of the 32bit based algos as described in the relevant section.
 
 
 #### Samba: Moving files / directories fails
@@ -957,48 +958,6 @@ First upgrade if possible, check the known bugs section, and contact trapexit.
 
 There seems to be an issue with Linux version `4.9.0` and above in which an invalid message appears to be transmitted to libfuse (used by mergerfs) causing it to exit. No messages will be printed in any logs as it's not a proper crash. Debugging of the issue is still ongoing and can be followed via the [fuse-devel thread](https://sourceforge.net/p/fuse/mailman/message/35662577).
 
-#### mergerfs under heavy load and memory pressure leads to kernel panic
-
-https://lkml.org/lkml/2016/9/14/527
-
-```
-[25192.515454] kernel BUG at /build/linux-a2WvEb/linux-4.4.0/mm/workingset.c:346!
-[25192.517521] invalid opcode: 0000 [#1] SMP
-[25192.519602] Modules linked in: netconsole ip6t_REJECT nf_reject_ipv6 ipt_REJECT nf_reject_ipv4 configfs binfmt_misc veth bridge stp llc nf_conntrack_ipv6 nf_defrag_ipv6 xt_conntrack ip6table_filter ip6_tables xt_multiport iptable_filter ipt_MASQUERADE nf_nat_masquerade_ipv4 xt_comment xt_nat iptable_nat nf_conntrack_ipv4 nf_defrag_ipv4 nf_nat_ipv4 nf_nat nf_conntrack xt_CHECKSUM xt_tcpudp iptable_mangle ip_tables x_tables intel_rapl x86_pkg_temp_thermal intel_powerclamp eeepc_wmi asus_wmi coretemp sparse_keymap kvm_intel ppdev kvm irqbypass mei_me 8250_fintek input_leds serio_raw parport_pc tpm_infineon mei shpchp mac_hid parport lpc_ich autofs4 drbg ansi_cprng dm_crypt algif_skcipher af_alg btrfs raid456 async_raid6_recov async_memcpy async_pq async_xor async_tx xor raid6_pq libcrc32c raid0 multipath linear raid10 raid1 i915 crct10dif_pclmul crc32_pclmul aesni_intel i2c_algo_bit aes_x86_64 drm_kms_helper lrw gf128mul glue_helper ablk_helper syscopyarea cryptd sysfillrect sysimgblt fb_sys_fops drm ahci r8169 libahci mii wmi fjes video [last unloaded: netconsole]
-[25192.540910] CPU: 2 PID: 63 Comm: kswapd0 Not tainted 4.4.0-36-generic #55-Ubuntu
-[25192.543411] Hardware name: System manufacturer System Product Name/P8H67-M PRO, BIOS 3904 04/27/2013
-[25192.545840] task: ffff88040cae6040 ti: ffff880407488000 task.ti: ffff880407488000
-[25192.548277] RIP: 0010:[<ffffffff811ba501>]  [<ffffffff811ba501>] shadow_lru_isolate+0x181/0x190
-[25192.550706] RSP: 0018:ffff88040748bbe0  EFLAGS: 00010002
-[25192.553127] RAX: 0000000000001c81 RBX: ffff8802f91ee928 RCX: ffff8802f91eeb38
-[25192.555544] RDX: ffff8802f91ee938 RSI: ffff8802f91ee928 RDI: ffff8804099ba2c0
-[25192.557914] RBP: ffff88040748bc08 R08: 000000000001a7b6 R09: 000000000000003f
-[25192.560237] R10: 000000000001a750 R11: 0000000000000000 R12: ffff8804099ba2c0
-[25192.562512] R13: ffff8803157e9680 R14: ffff8803157e9668 R15: ffff8804099ba2c8
-[25192.564724] FS:  0000000000000000(0000) GS:ffff88041f280000(0000) knlGS:0000000000000000
-[25192.566990] CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
-[25192.569201] CR2: 00007ffabb690000 CR3: 0000000001e0a000 CR4: 00000000000406e0
-[25192.571419] Stack:
-[25192.573550]  ffff8804099ba2c0 ffff88039e4f86f0 ffff8802f91ee928 ffff8804099ba2c8
-[25192.575695]  ffff88040748bd08 ffff88040748bc58 ffffffff811b99bf 0000000000000052
-[25192.577814]  0000000000000000 ffffffff811ba380 000000000000008a 0000000000000080
-[25192.579947] Call Trace:
-[25192.582022]  [<ffffffff811b99bf>] __list_lru_walk_one.isra.3+0x8f/0x130
-[25192.584137]  [<ffffffff811ba380>] ? memcg_drain_all_list_lrus+0x190/0x190
-[25192.586165]  [<ffffffff811b9a83>] list_lru_walk_one+0x23/0x30
-[25192.588145]  [<ffffffff811ba544>] scan_shadow_nodes+0x34/0x50
-[25192.590074]  [<ffffffff811a0e9d>] shrink_slab.part.40+0x1ed/0x3d0
-[25192.591985]  [<ffffffff811a53da>] shrink_zone+0x2ca/0x2e0
-[25192.593863]  [<ffffffff811a64ce>] kswapd+0x51e/0x990
-[25192.595737]  [<ffffffff811a5fb0>] ? mem_cgroup_shrink_node_zone+0x1c0/0x1c0
-[25192.597613]  [<ffffffff810a0808>] kthread+0xd8/0xf0
-[25192.599495]  [<ffffffff810a0730>] ? kthread_create_on_node+0x1e0/0x1e0
-[25192.601335]  [<ffffffff8182e34f>] ret_from_fork+0x3f/0x70
-[25192.603193]  [<ffffffff810a0730>] ? kthread_create_on_node+0x1e0/0x1e0
-```
-
-There is a bug in the kernel. A work around appears to be turning off `splice`. Don't add the `splice_*` arguments or add `no_splice_write,no_splice_move,no_splice_read`. This, however, is not guaranteed to work.
-
 
 #### rm: fts_read failed: No such file or directory
 
@@ -1011,7 +970,7 @@ Please update. This is only happened to mergerfs versions at or below v2.25.x an
 
 Users have reported running mergerfs on everything from a Raspberry Pi to dual socket Xeon systems with >20 cores. I'm aware of at least a few companies which use mergerfs in production. [Open Media Vault](https://www.openmediavault.org) includes mergerfs as its sole solution for pooling drives. The author of mergerfs had it running for over 300 days managing 16+ drives with reasonably heavy 24/7 read and write usage. Stopping only after the machine's power supply died.
 
-Most serious issues (crashes or data corruption) have been due to kernel bugs. All of which are fixed in stable releases.
+Most serious issues (crashes or data corruption) have been due to [kernel bugs](https://github.com/trapexit/mergerfs/wiki/Kernel-Issues-&-Bugs). All of which are fixed in stable releases.
 
 
 #### Can mergerfs be used with drives which already have data / are in use?
@@ -1200,7 +1159,7 @@ Yes.
 
 #### I notice massive slowdowns of writes when enabling cache.files.
 
-When file caching is enabled in any form (`cache.files!=off` or `direct_io=false`) it will issue `getxattr` requests for `security.capability` prior to *every single write*. This will usually result in a performance degregation, especially when using a network filesystem (such as NFS or CIFS/SMB/Samba.) Unfortunately at this moment the kernel is not caching the response.
+When file caching is enabled in any form (`cache.files!=off` or `direct_io=false`) it will issue `getxattr` requests for `security.capability` prior to *every single write*. This will usually result in a performance degradation, especially when using a network filesystem (such as NFS or CIFS/SMB/Samba.) Unfortunately at this moment the kernel is not caching the response.
 
 To work around this situation mergerfs offers a few solutions.
 
@@ -1244,7 +1203,7 @@ Filesystems are complex and difficult to debug. mergerfs, while being just a pro
 * A `strace` of mergerfs while the program is trying to do whatever it's failing to do:
   * `strace -f -p <mergerfsPID> -o /tmp/mergerfs.strace.txt`
 * **Precise** directions on replicating the issue. Do not leave **anything** out.
-* Try to recreate the problem in the simplist way using standard programs.
+* Try to recreate the problem in the simplest way using standard programs.
 
 
 #### Contact / Issue submission
@@ -1258,20 +1217,26 @@ Filesystems are complex and difficult to debug. mergerfs, while being just a pro
 
 #### Support development
 
-This software is free to use and released under a very liberal license. That said if you like this software and would like to support its development donations are welcome.
+This software is free to use and released under a very liberal license (ISC). That said if you like this software and would like to support its development donations are welcome.
+
+At the moment my preference would be GitHub Sponsors only because I am part of the matching program. That said please use whatever platform you prefer.
 
 * PayPal: https://paypal.me/trapexit
 * GitHub Sponsors: https://github.com/sponsors/trapexit
 * Patreon: https://www.patreon.com/trapexit
 * SubscribeStar: https://www.subscribestar.com/trapexit
 * Ko-Fi: https://ko-fi.com/trapexit
+* Open Collective: https://opencollective.com/trapexit
 * Bitcoin (BTC): 1DfoUd2m5WCxJAMvcFuvDpT4DR2gWX2PWb
 * Bitcoin Cash (BCH): qrf257j0l09yxty4kur8dk2uma8p5vntdcpks72l8z
 * Ethereum (ETH): 0xb486C0270fF75872Fc51d85879b9c15C380E66CA
 * Litecoin (LTC): LW1rvHRPWtm2NUEMhJpP4DjHZY1FaJ1WYs
+* Monero (XMR): 8AuU7PeK1fVhGP9yug8fdgKBssvUQoBVFKGhtT5DzWQt7fcTKC1SUx3Eb7xCAiVt3McWJp2Z9gX2wU7SPhh1GfWYBTCs6SS
 * Basic Attention Token (BAT): 0xE651d4900B4C305284Da43E2e182e9abE149A87A
+* LBRY Credits (LBC): bFusyoZPkSuzM2Pr8mcthgvkymaosJZt5r
 * Zcash (ZEC): t1ZwTgmbQF23DJrzqbAmw8kXWvU2xUkkhTt
 * Zcoin (XZC): a8L5Vz35KdCQe7Y7urK2pcCGau7JsqZ5Gw
+* Other crypto currencies: contact me for address
 
 
 # LINKS
