@@ -129,7 +129,8 @@ namespace l
     else
       {
         l::read_config(data_,is);
-
+        if(is.fail())
+          data_->errs->push_back("failure reading config file");
         is.close();
       }
   }
@@ -419,24 +420,20 @@ option_processor(void       *data_,
       return process_opt(data,arg_);
 
     case FUSE_OPT_KEY_NONOPT:
-      if(data->config->branches.empty())
+      if(data->config->branches.vec.empty())
         return process_branches(data,arg_);
       else
         return process_mount(data,arg_);
 
     case MERGERFS_OPT_HELP:
       usage();
-      close(2);
-      dup(1);
-      fuse_opt_add_arg(outargs_,"-ho");
-      break;
+      exit(0);
 
     case MERGERFS_OPT_VERSION:
       std::cout << "mergerfs version: "
                 << (MERGERFS_VERSION[0] ? MERGERFS_VERSION : "unknown")
                 << std::endl;
-      fuse_opt_add_arg(outargs_,"--version");
-      break;
+      exit(0);
 
     default:
       break;
@@ -469,6 +466,11 @@ namespace options
                    &data,
                    opts,
                    ::option_processor);
+
+    if(config_->branches.vec.empty())
+      errs_->push_back("branches not set");
+    if(config_->mount->empty())
+      errs_->push_back("mountpoint not set");
 
     set_default_options(args_);
     set_fsname(args_,config_);
