@@ -95,7 +95,7 @@ See the mergerfs [wiki for real world deployments](https://github.com/trapexit/m
 * **config**: Path to a config file. Same arguments as below in key=val format.
 * **branches**: Colon delimited list of branches.
 * **allow_other**: A libfuse option which allows users besides the one which ran mergerfs to see the filesystem. This is required for most use-cases.
-* **minfreespace=SIZE**: The minimum space value used for creation policies. Understands 'K', 'M', and 'G' to represent kilobyte, megabyte, and gigabyte respectively. (default: 4G)
+* **minfreespace=SIZE**: The minimum space value used for creation policies. Can be overridden by branch specific option. Understands 'K', 'M', and 'G' to represent kilobyte, megabyte, and gigabyte respectively. (default: 4G)
 * **moveonenospc=BOOL|POLICY**: When enabled if a **write** fails with **ENOSPC** (no space left on device) or **EDQUOT** (disk quota exceeded) the policy selected will run to find a new location for the file. An attempt to move the file to that branch will occur (keeping all metadata possible) and if successful the original is unlinked and the write retried. (default: false, true = mfs)
 * **use_ino**: Causes mergerfs to supply file/directory inodes rather than libfuse. While not a default it is recommended it be enabled so that linked files share the same inode value.
 * **inodecalc=passthrough|path-hash|devino-hash|hybrid-hash**: Selects the inode calculation algorithm. (default: hybrid-hash)
@@ -149,11 +149,27 @@ See the mergerfs [wiki for real world deployments](https://github.com/trapexit/m
 
 ### branches
 
-The 'branches' (formerly 'srcmounts') argument is a colon (':') delimited list of paths to be pooled together. It does not matter if the paths are on the same or different drives nor does it matter the filesystem. Used and available space will not be duplicated for paths on the same device and any features which aren't supported by the underlying filesystem (such as file attributes or extended attributes) will return the appropriate errors.
+The 'branches' (formerly 'srcmounts') argument is a colon (':') delimited list of paths to be pooled together. It does not matter if the paths are on the same or different drives nor does it matter the filesystem (within reason). Used and available space will not be duplicated for paths on the same device and any features which aren't supported by the underlying filesystem (such as file attributes or extended attributes) will return the appropriate errors.
+
+Branches currently have two options which can be set. A type which impacts whether or not the branch is included in a policy calculation and a individual minfreespace value. The values are set by prepending an `=` at the end of a branch designation and using commas as delimiters. Example: /mnt/drive=RW,1234
+
+
+#### branch type
+
+* RW: (read/write) - Default behavior. Will be eligible in all policy categories.
+* RO: (read-only) - Will be excluded from `create` and `action` policies. Same as a read-only mounted filesystem would be (though faster to process).
+* NC: (no-create) - Will be excluded from `create` policies. You can't create on that branch but you can change or delete.
+
+
+#### minfreespace
+
+Same purpose as the global option but specific to the branch. If not set the global value is used.
+
+
+#### globbing
 
 To make it easier to include multiple branches mergerfs supports [globbing](http://linux.die.net/man/7/glob). **The globbing tokens MUST be escaped when using via the shell else the shell itself will apply the glob itself.**
 
-Each branch can have a suffix of `=RW` (read / write), `=RO` (read-only), or `=NC` (no create). These suffixes work with globs as well and will apply to each path found. `RW` is the default behavior and those paths will be eligible for all policy categories. `RO` will exclude those paths from `create` and `action` policies (just as a filesystem being mounted `ro` would). `NC` will exclude those paths from `create` policies (you can't create but you can change / delete).
 
 ```
 # mergerfs -o allow_other,use_ino /mnt/disk\*:/mnt/cdrom /media/drives
@@ -168,7 +184,7 @@ To have the pool mounted at boot or otherwise accessible from related tools use 
 /mnt/disk*:/mnt/cdrom  /mnt/pool      fuse.mergerfs  allow_other,use_ino   0       0
 ```
 
-**NOTE:** the globbing is done at mount or xattr update time (see below). If a new directory is added matching the glob after the fact it will not be automatically included.
+**NOTE:** the globbing is done at mount or when updated using the runtime API. If a new directory is added matching the glob after the fact it will not be automatically included.
 
 **NOTE:** for mounting via **fstab** to work you must have **mount.fuse** installed. For Ubuntu/Debian it is included in the **fuse** package.
 
@@ -410,6 +426,35 @@ The above behavior will help minimize the likelihood of EXDEV being returned but
 The options `statfs` and `statfs_ignore` can be used to modify `statfs` behavior.
 
 
+# ERROR HANDLING
+
+POSIX filesystem functions offer a single return code meaning that there is some complication regarding the handling of multiple branches as mergerfs does. It tries to handle errors in a way that would generally return meaningful values for that particular function.
+
+### chmod, chown, removexattr, setxattr, truncate, utimens
+
+1) if no error: return 0 (success)
+2) if no successes: return first error
+3) if one of the files acted on was the same as the related search function: return its value
+4) return 0 (success)
+
+While doing this increases the complexity and cost of error handling, particularly step 3, this provides probably the most reasonable return value.
+
+
+### unlink, rmdir
+
+1) if no errors: return 0 (success)
+2) return first error
+
+Older version of mergerfs would return success if any success occurred but for unlink and rmdir there are downstream assumptions that, while not impossible to occur, can confuse some software.
+
+
+### others
+
+For search functions there is always a single thing acted on and as such whatever return value that comes from the single function call is returned.
+
+For create functions `mkdir`, `mknod`, and `symlink` which don't return a file descriptor and therefore can have `all` or `epall` policies it will return success if any of the calls succeed and an error otherwise.
+
+
 # BUILD / UPDATE
 
 **NOTE:** Prebuilt packages can be found at and recommended for most users: https://github.com/trapexit/mergerfs/releases
@@ -460,6 +505,23 @@ make USE_XATTR=0      - build program without xattrs functionality
 make STATIC=1         - build static binary
 make LTO=1            - build with link time optimization
 ```
+
+
+# UPGRADE
+
+mergerfs can be upgraded live by mounting on top of the previous instance. Simply install the new version of mergerfs and follow the instructions below.
+
+Add `nonempty` to your mergerfs option list and call mergerfs again or if using `/etc/fstab` call for it to mount again. Existing open files and such will continue to work fine though they won't see runtime changes since any such change would be the new mount. If you plan on changing settings with the new mount you should / could apply those before mounting the new version.
+
+```
+$ sudo mount /mnt/mergerfs
+$ mount | grep mergerfs
+media on /mnt/mergerfs type fuse.mergerfs (rw,relatime,user_id=0,group_id=0,default_permissions,allow_other)
+media on /mnt/mergerfs type fuse.mergerfs (rw,relatime,user_id=0,group_id=0,default_permissions,allow_other)
+```
+
+A problem with this approach is that the underlying instance will continue to run even if the software using it stop or are restarted. To work around this you can use a "lazy umount". Before mounting over top the mount point with the new instance of mergerfs issue: `umount -l <mergerfs_mountpoint>`.
+
 
 
 # RUNTIME CONFIG
@@ -590,20 +652,6 @@ A B C
 [trapexit:/mnt/mergerfs] $ xattr -p user.mergerfs.allpaths A | tr '\0' '\n'
 /mnt/a/full/path/to/A
 /mnt/b/full/path/to/A
-```
-
-
-# UPGRADE
-
-mergerfs can be upgraded live by mounting on top of the previous version. Simply install the new version of mergerfs and follow the instructions below.
-
-Add `nonempty` to your mergerfs option list and call mergerfs again or if using `/etc/fstab` call for it to mount again. Existing open files and such will continue to work fine though they won't see runtime changes since any such change would be the new mount. If you plan on changing settings with the new mount you should / could apply those before mounting the new version.
-
-```
-$ sudo mount /mnt/mergerfs
-$ mount | grep mergerfs
-media on /mnt/mergerfs type fuse.mergerfs (rw,relatime,user_id=0,group_id=0,default_permissions,allow_other)
-media on /mnt/mergerfs type fuse.mergerfs (rw,relatime,user_id=0,group_id=0,default_permissions,allow_other)
 ```
 
 
@@ -757,7 +805,7 @@ do
                   head -n 1 | \
                   cut -d' ' -f2-)
     test -n "${FILE}"
-    rsync -axqHAXWES --preallocate --remove-source-files "${CACHE}/./${FILE}" "${BACKING}/"
+    rsync -axqHAXWESR --preallocate --remove-source-files "${CACHE}/./${FILE}" "${BACKING}/"
 done
 ```
 
@@ -826,7 +874,6 @@ $ dd if=/mnt/mergerfs/1GB.file of=/dev/null bs=1M count=1024 iflag=nocache conv=
 * https://github.com/trapexit/backup-and-recovery-howtos : A set of guides / howtos on creating a data storage system, backing it up, maintaining it, and recovering from failure.
 * If you don't see some directories and files you expect in a merged point or policies seem to skip drives be sure the user has permission to all the underlying directories. Use `mergerfs.fsck` to audit the drive for out of sync permissions.
 * Do **not** use `cache.files=off` if you expect applications (such as rtorrent) to use [mmap](http://linux.die.net/man/2/mmap) files. Shared mmap is not currently supported in FUSE w/ page caching disabled. Enabling `dropcacheonclose` is recommended when `cache.files=partial|full|auto-full`.
-* Since POSIX functions give only a singular error or success its difficult to determine the proper behavior when applying the function to multiple targets. **mergerfs** will return an error only if all attempts of an action fail. Any success will lead to a success returned. This means however that some odd situations may arise.
 * [Kodi](http://kodi.tv), [Plex](http://plex.tv), [Subsonic](http://subsonic.org), etc. can use directory [mtime](http://linux.die.net/man/2/stat) to more efficiently determine whether to scan for new content rather than simply performing a full scan. If using the default **getattr** policy of **ff** it's possible those programs will miss an update on account of it returning the first directory found's **stat** info and its a later directory on another mount which had the **mtime** recently updated. To fix this you will want to set **func.getattr=newest**. Remember though that this is just **stat**. If the file is later **open**'ed or **unlink**'ed and the policy is different for those then a completely different file or directory could be acted on.
 * Some policies mixed with some functions may result in strange behaviors. Not that some of these behaviors and race conditions couldn't happen outside **mergerfs** but that they are far more likely to occur on account of the attempt to merge together multiple sources of data which could be out of sync due to the different policies.
 * For consistency its generally best to set **category** wide policies rather than individual **func**'s. This will help limit the confusion of tools such as [rsync](http://linux.die.net/man/1/rsync). However, the flexibility is there if needed.
